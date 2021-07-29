@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+
+<html lang="eng">
+
+    <head>
+        <meta charset="UTF-8">
+        <title>Raffelsberger A5</title>
+        <!-- Custom Stylesheets -->
+        <link rel="stylesheet" href="static/title_style.css">
+        <link rel="stylesheet" href="static/canvas_style.css">
+        <link rel="stylesheet" href="static/content_style.css">
+    </head>
+
+    <body>
+
+        <div id="headerDIV">
+            <h1>COVID-19 Dashboard</h1>
+        </div>
+
+        <div id="dropdownDIV">
+            <!-- Dropdown Variable 1 -->
+            <label for="variable1Selector">Variable 1:</label>
+            <select id="variable1Selector" autocomplete="off" class="dropdown">
+                <option value="new_cases_smoothed_per_million">new cases / mio</option>
+                <option value="total_cases_per_million">total cases / mio</option>
+                <option value="new_vaccinations_smoothed_per_million">new vaccinations / mio</option>
+                <option value="total_vaccinations_per_hundred">total vaccinations / 100</option>
+                <option value="new_deaths_smoothed_per_million">new deaths / mio</option>
+                <option value="total_deaths_per_million">total deaths / mio</option>
+                <option value="hospital_beds_per_thousand">hospital beds / 1000</option>
+                <option value="diabetes_prevalence">diabetes prevalence</option>
+                <option value="male_smokers">male smokers</option>
+                <option value="handwashing_facilities">handwashing facilities</option>
+                <option value="cardiovasc_death_rate">cardio death rate</option>
+                <option value="female_smokers">female smokers</option>
+            </select>
+
+            <!-- Dropdown Variable 1 -->
+            <label for="variable2Selector">Variable 2:</label>
+            <select id="variable2Selector" autocomplete="off" class="dropdown">
+                <option value="total_cases_per_million">total cases / mio</option>
+                <option value="new_cases_smoothed_per_million">new cases / mio</option>
+                <option value="new_vaccinations_smoothed_per_million">new vaccinations / mio</option>
+                <option value="total_vaccinations_per_hundred">total vaccinations / 100</option>
+                <option value="new_deaths_smoothed_per_million">new deaths / mio</option>
+                <option value="total_deaths_per_million">total deaths / mio</option>
+                <option value="hospital_beds_per_thousand">hospital beds / 1000</option>
+                <option value="diabetes_prevalence">diabetes prevalence</option>
+                <option value="male_smokers">male smokers</option>
+                <option value="handwashing_facilities">handwashing facilities</option>
+                <option value="cardiovasc_death_rate">cardio death rate</option>
+                <option value="female_smokers">female smokers</option>
+            </select>
+
+            <!-- Date Selector -->
+            <label for="dateSelector">Date:</label>
+            <input type="date" id="dateSelector" value="2021-04-26" min="2020-01-01" max="2021-05-31">
+        </div>
+
+        <!-- JS Libraries -->
+        <script src="libraries/d3.js"></script>
+        <script src="libraries/topojson.js"></script>
+        <script src="libraries/jquery-1.7.1.min.js"></script>
+        <script src="libraries/d3-geo-projection.v2.min.js"></script>
+        <script src="libraries/d3-scale-chromatic.min.js"></script>
+        
+        <!-- Custom Scripts -->
+        <script src="vis/helperFunctions.js"></script>
+        <script src="vis/config.js"></script>
+        <script src="vis/linechart.js"></script>
+        <script src="vis/map.js"></script>
+        <script src="vis/scatterplot.js"></script>
+        <script src="vis/interaction.js"></script>
+        <script src="vis/factfields.js"></script>
+
+    </body>
+
+</html>
+
+<!--REFERENCES-->
+<!--https://stackoverflow.com/questions/10779148/javascript-jquery-is-not-defined-function-error-->
+<!--http://code.jquery.com/jquery-1.7.1.min.js-->
+<!--https://d3js.org/d3-geo-projection.v2.min.js-->
+<!--https://developer.mozilla.org/en-US/docs/Web/HTML/Element/input/date-->
+<!--https://github.com/d3/d3-scale-chromatic-->

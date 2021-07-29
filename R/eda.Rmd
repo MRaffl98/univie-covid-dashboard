@@ -1,0 +1,669 @@
+---
+title: EDA
+author: Michael Raffelsberger
+date: June 22, 2021
+output:
+  html_document:
+    code_folding: show
+    highlight: pygment
+    number_sections: yes
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+**I have edited and extended my exploratory data analysis (EDA) from A4 to find out what variables are most promising (reliable values, not too many missing values, etc.) to use in the dashboard and what preprocessing steps have to be conducted (replace missing values, erroneous values, etc.).**
+
+```{r}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(rjson)
+```
+
+```{r}
+data <- read_csv('../data/owid-covid-data.csv')
+geodata <- fromJSON(file = '../data/world_countries.json')
+```
+
+# Functions
+
+```{r}
+count_missing <- function(x) {
+  
+  return(sum(is.na(x)))
+  
+}
+```
+
+```{r}
+get_missing_by_date <- function(data, columns) {
+  
+  missing_by_date <- data %>%
+    group_by(date) %>%
+    summarize(across(all_of(columns), count_missing))
+  
+  return(missing_by_date)
+  
+}
+```
+
+```{r}
+get_missing_by_country <- function(data, columns) {
+  
+  missing_by_country <- data %>%
+    select(-date) %>%
+    group_by(location) %>%
+    summarize_all(count_missing)
+  
+  missing_by_country['total'] <- rowSums(missing_by_country[, 3:ncol(missing_by_country)])
+  missing_by_country <- missing_by_country %>%
+    arrange(desc(total))
+  
+  return(missing_by_country)
+  
+}
+```
+
+```{r}
+plot_missing_by_date <- function(data, columns) {
+  
+  missing_by_date <- get_missing_by_date(data, columns) %>%
+    pivot_longer(columns)
+  
+  ggplot() +
+    geom_line(data = missing_by_date, aes(x = date, y = value)) +
+    facet_wrap(~ name) +
+    theme_minimal() +
+    labs(x = "date", y = 'missing values')
+  
+}
+```
+
+```{r}
+plot_missing_by_date_context <- function(data, columns) {
+  
+  missing_by_date <- get_missing_by_date(data, columns) %>%
+    pivot_longer(columns)
+  
+  ggplot() +
+    geom_line(data = missing_by_date, aes(x = date, y = value, color = name)) +
+    geom_line(aes(x = as.Date(names(table(data$date))), y = unname(table(data$date)))) +
+    theme_minimal() +
+    labs(x = 'date', y = 'missing values', title = "Missings with number of rows per date") +
+    theme(legend.position = 'bottom', legend.title = element_blank())  
+  
+}
+```
+
+```{r}
+plot_missing_by_country <- function(data, columns, max_plot = 10) {
+  
+  missing <- get_missing_by_country(data, columns) %>%
+    slice(1:max_plot) %>% 
+    pivot_longer(c(columns, 'total'))
+  
+  ggplot(missing) +
+    geom_col(aes(x = location, y = value)) +
+    facet_wrap(~ name) +
+    labs(y = 'missing values') +
+    coord_flip() + 
+    theme_minimal()
+
+}
+```
+
+```{r}
+find_value_missing_transitions <- function(vec) {
+  
+  if (all(is.na(vec))) {
+    
+    return(rep(0, length(vec)))
+    
+  } else {
+    
+    weight <- 10*max(abs(vec), na.rm = TRUE)
+    vec <- replace_na(vec, weight)
+    diff_vec <- c(0, diff(vec))
+    diff_vec[diff_vec < weight/2] <- 0
+    diff_vec[diff_vec > weight/2] <- 1
+    
+    return(diff_vec)
+    
+  }
+
+}
+```
+
+```{r}
+show_transitions <- function(data, columns) {
+  
+  data <- data %>%
+    group_by(location) %>%
+    mutate_at(columns, find_value_missing_transitions) %>%
+    filter(if_any(columns, function(x) x == 1))
+  
+  return(data)
+
+}
+```
+
+```{r}
+plot_variable <- function(data, column) {
+  
+  ggplot(data) +
+    geom_line(aes(x = date, y = !!sym(column), by = location), size = 0.05) +
+    theme_minimal()
+  
+}
+```
+
+
+```{r}
+get_countries_from_geodata <- function(geodata) {
+  
+  countries <- sapply(geodata[[2]], function(x) unname(x[[2]][[1]]))
+  return(countries)
+  
+}
+```
+
+```{r}
+get_countries_from_data <- function(data) {
+  
+  return(unique(data$location))
+  
+}
+```
+
+# Countries
+
+**First of all we would like to harmonize the country names from the owid-covid data and the json data for the choropleth map.** 
+
+```{r}
+json_countries <- get_countries_from_geodata(geodata)
+data_countries <- get_countries_from_data(data)
+```
+
+**Some countries from the json file are not in the owid-covid data ...**
+
+```{r}
+setdiff(json_countries, data_countries) # in json not in owid-covid
+```
+
+**... and the other way round.**
+
+```{r}
+setdiff(data_countries, json_countries) # in owid-covid not in json
+```
+
+**We can harmonize some of them. Unfortunately UK/England is a problematic case. Some small countries have covid data but do not play a role on the map. Some countries are on the map but do not have covid data since they are not officially states (e.g. Western Sahara, Antarctica) for instance.**
+
+```{r}
+country_dict <- list(
+  # Antarctica,
+  # French Southern and Antarctic Lands,
+  "Bahamas" = "The Bahamas",
+  "Cote d'Ivoire" = "Ivory Coast",
+  "Democratic Republic of Congo" = "Democratic Republic of the Congo",
+  "Congo" = "Republic of the Congo",
+  "Czechia" = "Czech Republic",
+  # "United Kingdom" = "England",
+  "Guinea-Bissau" = "Guinea Bissau",
+  "North Macedonia" = "Macedonia",
+  # Puerto Rico,
+  # North Korea,
+  # Western Sahara,
+  # Somaliland,
+  "Serbia" = "Republic of Serbia",
+  # Swaziland,
+  # East Timor,
+  "Tanzania" = "United Republic of Tanzania",
+  "United States" = "USA"
+  # "Palestine" = "West Bank"
+)
+
+country_dict_vec <- as.character(country_dict)
+names(country_dict_vec) <- names(country_dict)
+```
+
+**We filter the country where we can use both the covid data and the map.**
+
+```{r}
+data <- data %>%
+  mutate(location = recode(location, !!!country_dict_vec)) %>%
+  filter(location %in% c(json_countries, "World"))
+```
+
+
+# Features
+
+**The next step is to have a look at the codebook (https://github.com/owid/covid-19-data/blob/master/public/data/owid-covid-codebook.csv) and get an idea of what variables might play a role in our analysis. There are a handful of relevant groups of features for the task. The first group consists of some identifiers or general country specific information. The core covid data are the groups of infection, death, vaccination and test columns. Furthermore, we have risk factor columns as well as fact columns (for the fact fields) that will be relevant for the dashboard.** 
+
+**We look at the number of missing values per column to make sure we do not choose the 'worst' columns. Relative columns (per million, per thousand, etc.) have the same amount of missing values as their corresponding absolute columns. ICU has a lot of missing values which is why I decided to leave it out to save some effort.**
+
+```{r}
+sort(sapply(data, count_missing))
+```
+
+```{r}
+identifier_columns <- c(
+  'location', 
+  'date' 
+)
+
+infection_columns <- c(
+  'total_cases_per_million', # interesting for risk/development factors
+  'new_cases_per_million', # interesting for vaccination
+  'new_cases_smoothed_per_million' # interesting for vaccination
+)
+
+death_columns <- c(
+  'new_deaths_smoothed_per_million',
+  'total_deaths_per_million', 
+  'new_deaths_per_million'
+)
+
+vaccination_columns <- c(
+  'total_vaccinations_per_hundred',
+  'people_vaccinated_per_hundred',
+  'people_fully_vaccinated_per_hundred',
+  'new_vaccinations_smoothed_per_million' 
+)
+
+test_columns <- c(
+  'total_tests_per_thousand',
+  'new_tests_per_thousand',
+  'new_tests_smoothed_per_thousand'
+)
+
+risk_factor_columns <- c(
+  'handwashing_facilities',
+  'hospital_beds_per_thousand',
+  'cardiovasc_death_rate',
+  'diabetes_prevalence',
+  'female_smokers',
+  'male_smokers'  
+)
+
+fact_columns <- c(
+  'population', 
+  'gdp_per_capita',
+  'median_age',
+  'life_expectancy'
+)
+
+useful_columns <- c(
+  identifier_columns, 
+  infection_columns,
+  death_columns,
+  vaccination_columns,
+  test_columns,
+  risk_factor_columns, 
+  fact_columns
+)
+```
+
+**Next, we select the just defined useful features, i.e. remove all the other columns.** 
+
+```{r}
+data <- select(data, useful_columns) # select just the useful columns
+```
+
+**Let's have a look at some summary statistics. We have 74575 rows and quite some NAs for different columns.** 
+**Some infection/death columns have negative values!**
+
+```{r}
+summary(data) # summary statistics overview
+```
+
+# Missing Values (general)
+
+**How many rows do we have for each country? We see that for some countries, there are only few entries. For most big countries, we have more than 400 rows though.** 
+
+```{r}
+sort(table(data$location, useNA = 'always')) # rows per location
+```
+
+**Let's have a look for which dates we have our data. At the beginning of the pandemic, there are only few entries. From April 2020 on we have around 160 entries per day.** 
+
+```{r}
+table(data$date, useNA = 'always') # number of rows per date
+```
+
+**Once again, in which columns do we have missing values for these entries? There are naturally many in the vaccination columns, also in the test columns, in the hand-washing facilities, smoker and extreme poverty columns. The rest has around 15000 or less.** 
+
+```{r}
+sort(sapply(data, count_missing))
+```
+
+**In the plot below, we see that from April 2020 on we constantly have around 5000 rows per month.** 
+
+```{r}
+data %>%
+  mutate(year = as.numeric(substr(date, 1, 4)),
+         month = as.numeric(substr(date, 6, 7)),
+         newdate = as.Date(paste0(year, '-', month, '-', 1))) %>%
+  count(newdate) %>%
+  
+  ggplot() +
+  geom_col(aes(x = newdate, y = n)) +
+  theme_minimal() +
+  labs(y = 'Number of rows', x = 'Month') +
+  theme(legend.position = 'None')
+```
+
+**The next plot shows the number of rows per country and month with strong vertical jitter and low alpha. We once again see, that for many countries we really have a very stable amount of entries from April 2020 until April 2021. There are many implicitly missing values at the beginning of the pandemic though.**
+
+```{r}
+data %>%
+  mutate(year = as.numeric(substr(date, 1, 4)),
+         month = as.numeric(substr(date, 6, 7)),
+         newdate = as.Date(paste0(year, '-', month, '-', 1))) %>%
+  count(location, newdate) %>%
+  
+  ggplot() +
+  geom_line(aes(x = newdate, y = n, by = location), position = position_jitter(height = 2), size = .2, alpha = .3) +
+  theme_minimal() +
+  labs(y = 'Number of rows', x = 'Month') +
+  ggtitle('Number of rows per month and country') +
+  theme(legend.position = 'None')
+```
+
+# Infections
+
+```{r}
+infection_data <- data %>% select(location, date, all_of(infection_columns))
+```
+
+## Missing Values
+
+**The first (collection of) plot(s) show(s) that all infection related features have about the same amount of missing values for all dates, except for the smoothed variants at the beginning of the pandemic, which makes a lot of sense.** **The begin of the pandemic is not very relevant anyway.**
+
+```{r}
+plot_missing_by_date(infection_data, infection_columns)
+```
+
+**To have a little more context (black line...maximum possible missing values): Also makes a lot of sense and again shows that the date is reliable (not full of missing values) from approximately April 2020 to April 2021.**
+
+```{r}
+plot_missing_by_date_context(infection_data, infection_columns)
+```
+
+**Last but not least, we have a look at the 10 countries with the most missing values (in absolute counts) in the infection columns. This means that there are rows for these countries but the respective infection columns are not filled.** 
+
+```{r}
+plot_missing_by_country(infection_data, infection_columns)
+```
+
+**Are there missing values in between or just in the beginning and end of the pandemic? In Sudan, there was a positive value on 12.2.2020 for new_cases_smoothed_per_million and an NA the following day.** **This is a possible data error.**
+
+```{r}
+show_transitions(infection_data, infection_columns)
+```
+
+## Values
+
+**Some massive negative values here since values were corrected in hindsight I guess. They also appear in the smoothed variable where they are not so extreme though. Implicitly they also appear in the total cases! (i.e. total cases not monotonically increasing) It will make sense to use the smoothed variable for new cases after setting negative values to zero.**
+
+```{r}
+summary(infection_data)
+```
+
+```{r}
+plot_variable(infection_data, "new_cases_per_million")
+```
+
+```{r}
+plot_variable(infection_data, "new_cases_smoothed_per_million")
+```
+
+```{r}
+plot_variable(infection_data, "total_cases_per_million")
+```
+
+# Deaths
+
+```{r}
+death_data <- data %>% select(location, date, all_of(death_columns))
+```
+
+## Missing Values
+
+**The smoothed column globally looks more promising in terms of missing values here. Total and new deaths behave similarly.** 
+
+```{r}
+plot_missing_by_date(death_data, death_columns)
+```
+
+**To have a little more context: Also makes a lot of sense and again shows that the date is reliable (not full of missing values) from approximately April 2020 to April 2021.**
+
+```{r}
+plot_missing_by_date_context(death_data, death_columns)
+```
+
+**Last but not least, we have a look at the 10 countries with the most missing values (in absolute counts) in the death columns. This means that there are rows for these countries but the respective infection columns are not filled.** 
+
+```{r}
+plot_missing_by_country(death_data, death_columns)
+```
+
+**There is again one possible data error for Sudan (missing value following a non-missing value in March 2020).**
+
+```{r}
+show_transitions(death_data, death_columns)
+```
+
+
+## Values
+
+**There are again negative values for the non-total variables. The situation is similar as before with the infection variables.**
+
+```{r}
+summary(death_data)
+```
+
+```{r}
+plot_variable(death_data, "new_deaths_smoothed_per_million")
+```
+
+```{r}
+plot_variable(death_data, "total_deaths_per_million")
+```
+
+```{r}
+plot_variable(death_data, "new_deaths_per_million")
+```
+
+# Vaccinations
+
+```{r}
+vaccination_data <- data %>% select(location, date, all_of(vaccination_columns))
+```
+
+## Missing Values
+
+**Naturally, the vaccination columns just have NAs (approximately) until the end of 2020 (when the first vaccination campaigns started). Interestingly, the smoothed variables have far less NAs than the other variables. Having a closer look at the data, one can find out that the other columns have gaps while the smoothed variables kind of "interpolate" the vaccination numbers which leads to much less missing values.** 
+
+```{r}
+plot_missing_by_date(vaccination_data, vaccination_columns) # day level
+```
+
+```{r}
+plot_missing_by_country(vaccination_data, vaccination_columns, max_plot = 10) # top 10 (but similar for most countries)
+```
+
+**It is often the case that the total_vaccinations_per_hundred column has an NA following a non-missing value! We have to impute these values somehow in preprocessing. For the new vaccinations smoothed column the last days of the record are missing. Here we can simply fill them with the last available value.**
+
+```{r}
+show_transitions(vaccination_data, vaccination_columns)
+show_transitions(vaccination_data, "total_vaccinations_per_hundred")
+show_transitions(vaccination_data, "new_vaccinations_smoothed_per_million")
+```
+
+## Values
+
+**The total_vaccinations_per_hundred have a little less missing values than the other cumulative variables here and also a direct correspondence to the new_vaccinations_smoothed_per_million column which is why we will use these two.**
+
+```{r}
+summary(vaccination_data)
+```
+
+**Here we do not have negative values. We can just fill the missing values with zeros which (in most cases) is also semantically correct.**
+
+```{r}
+ggplot(vaccination_data) +
+  geom_line(aes(x = date, y = total_vaccinations_per_hundred, by = location), size = 0.05) +
+  theme_minimal()
+```
+
+**There seem to be some outliers (Buthan and Falkland Islands) have more than 50000 new vaccinations/million, but since these are small countries it might just be correct** 
+
+```{r}
+ggplot(vaccination_data) +
+  geom_line(aes(x = date, y = new_vaccinations_smoothed_per_million, by = location), size = 0.05) +
+  theme_minimal()
+```
+
+# Tests
+
+```{r}
+test_data <- data %>% select(location, date, all_of(test_columns))
+```
+
+## Missing Values
+
+**All columns behave similarly in terms of missing values. Smoothed has a little less missing values.**
+
+```{r}
+plot_missing_by_date(test_data, test_columns)
+```
+
+```{r}
+plot_missing_by_date_context(test_data, test_columns)
+```
+
+```{r}
+plot_missing_by_country(test_data, test_columns)
+```
+
+```{r}
+show_transitions(test_data, test_columns)
+show_transitions(test_data, "total_tests_per_thousand")
+show_transitions(test_data, "new_tests_smoothed_per_thousand")
+```
+
+## Values
+
+**Only the unsmoothed new tests variable which we will not use anyway has negative values.**
+
+```{r}
+summary(test_data)
+```
+
+```{r}
+plot_variable(test_data, "total_tests_per_thousand")
+```
+
+```{r}
+plot_variable(test_data, "new_tests_per_thousand")
+```
+
+```{r}
+plot_variable(test_data, "new_tests_smoothed_per_thousand")
+```
+
+# Risk factors
+
+**The risk factors seem to have no variation at all even though they are actually time-series, or at least naturally time-varying.**
+
+```{r}
+risk_factor_variances <- data %>%
+  group_by(location) %>%
+  summarise_all(var, na.rm = TRUE) %>%
+  select(risk_factor_columns)
+
+sum(risk_factor_variances, na.rm = TRUE)
+```
+
+**Since these values are constant, we can (in case of missing values) just overwrite these missing values with the mean per country and impute 0 if there is not a single non-missing value per_country.**
+
+```{r}
+risk_factor_data <- data %>%
+  select(location, date, all_of(risk_factor_columns))
+```
+
+```{r}
+risk_factors_aggregated <- risk_factor_data %>%
+  group_by(location) %>%
+  summarise_at(risk_factor_columns, function(x) mean(x, na.rm = TRUE))
+  
+sapply(risk_factors_aggregated, function(x) sum(is.nan(x)))
+```
+
+**This complicatedly seeming query finds out that the risk factors are actually either available for all entries of a country or not at all. I.e. we only have to set them to zero where they are not available at all.**
+
+```{r}
+risk_factor_data %>% 
+  group_by(location) %>%
+  mutate(na_col = NA) %>%
+  summarize_at(c("na_col", risk_factor_columns), function(x) sum(is.na(x))) %>%
+  pivot_longer(cols = all_of(c("na_col", risk_factor_columns))) %>%
+  filter(value > 0) %>%
+  group_by(location) %>%
+  summarize(n_unique = n_distinct(value)) %>%
+  filter(n_unique > 1)
+```
+
+
+# Facts
+
+**The facts are just for the fact fields. We just need them aggregated, not in time-series format.**
+
+```{r}
+fact_variances <- data %>%
+  group_by(location) %>%
+  summarise_all(var, na.rm = TRUE) %>%
+  select(risk_factor_columns)
+
+sum(fact_variances, na.rm = TRUE)
+```
+
+**Fortunately, they are also constant in the dataset. The few missing values can be just overwritten with 'unknown' and we can export them as strings since we only write them into the fact fields without doing any computation. (Javascript is weakly typed however)**
+
+```{r}
+fact_data <- data %>%  select(location, date, all_of(fact_columns))
+```
+
+```{r}
+facts_aggregated <- fact_data %>%
+  group_by(location) %>%
+  summarise_at(fact_columns, function(x) mean(x, na.rm = TRUE))
+  
+sapply(facts_aggregated, function(x) sum(is.nan(x)))
+```
+
+```{r}
+fact_data %>% 
+  group_by(location) %>%
+  mutate(na_col = NA) %>%
+  summarize_at(c("na_col", fact_columns), function(x) sum(is.na(x))) %>%
+  pivot_longer(cols = all_of(c("na_col", fact_columns))) %>%
+  filter(value > 0) %>%
+  group_by(location) %>%
+  summarize(n_unique = n_distinct(value)) %>%
+  filter(n_unique > 1)
+```
+
+# Sources
+* https://cran.r-project.org/web/packages/naniar/vignettes/naniar-visualisation.html
+* https://tidyr.tidyverse.org/reference/pivot_longer.html
+* https://www.datanovia.com/en/blog/ggplot-axis-ticks-set-and-rotate-text-labels/
+* http://www.sthda.com/english/wiki/ggplot2-rotate-a-graph-reverse-and-flip-the-plot
+* https://stackoverflow.com/questions/10866047/jitter-geom-line
+
